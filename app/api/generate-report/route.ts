@@ -3,96 +3,124 @@ import OpenAI from 'openai';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
+  baseURL: "https://api.openai.com/v1",
 });
 
 export async function POST(req: Request) {
   try {
-    const { name, gender, birthDate, birthTime } = await req.json();
+    const body = await req.json();
+    const { name, gender, birthDate, birthTime } = body;
 
-    // 1. 调用后端 API 拿数理数据
-    const pythonApiUrl = 'https://ziwei-calc.vercel.app/api/calc'; 
+    // 1. 调用 Python 排盘 (确保后端返回了 expert_diagnosis 和 core 数据)
+    // ⚠️ 注意：这里假设你的后端地址是这个，如果不同请自行修改
+    const pythonApiUrl = "https://ziwei-calc.vercel.app/api/calc"; 
+    
     const [year, month, day] = birthDate.split('-');
     const [hour, minute] = birthTime.split(':');
 
+    // 调用 Python 后端
     const apiResponse = await fetch(pythonApiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        year: parseInt(year), month: parseInt(month), day: parseInt(day),
-        hour: parseInt(hour), minute: parseInt(minute),
+        year: parseInt(year), 
+        month: parseInt(month), 
+        day: parseInt(day),
+        hour: parseInt(hour), 
+        minute: parseInt(minute) || 0,
         gender: gender === 'male' ? '男' : '女',
+        name: name
       }),
     });
 
+    if (!apiResponse.ok) {
+      throw new Error(`排盘服务异常: ${apiResponse.status}`);
+    }
+
     const calcData = await apiResponse.json();
-    if (calcData.error) throw new Error(calcData.message);
+    
+    // 准备喂给 AI 的数据
+    const dataString = JSON.stringify(calcData.result, null, 2); // 核心数据结构
+    const expertText = calcData.formatted_output || ""; // Python 生成的专家诊断文本
 
-    // 2. 注入【钦天门实战秘籍】核心逻辑
+    // ============================================================
+    // 🚀 核心注入：基于《钦天四化·实战断命秘籍》的宗师提示词
+    // ============================================================
     const SYSTEM_PROMPT = `
-# Role: 钦天门紫微斗数宗师 (硬核实战版)
+# Role: 钦天门紫微斗数宗师 (Deep Soul Surgeon)
 
-# 核心看盘流程 (严格执行):
-你必须按照以下五个阶段进行深度解盘，严禁只有结论没有依据：
+# 核心任务：
+你必须基于用户提供的排盘数据，严格按照【钦天五阶段断命流程】进行深度解析。
+**严禁废话**，每一个结论都必须附带**【技术判定依据】** (判定依据：XX星在XX宫/XX四化/XX联动)。
 
-1. **【立极】定位因果** [cite: 2, 3]：
-   - 确定【来因宫】落位。判断是“自立格”还是“他立格” [cite: 5, 6, 7]。
-   - 定性：自立格靠自己，他立格与外部捆绑 [cite: 6, 7]。
+# [cite_start]阶段一：【立极】找准源头 [cite: 2]
+- **动作**：根据【来因宫】判断命主是“自立格”还是“他立格”。
+- **判定逻辑**：
+  - [cite_start]自立格 (命、疾、财、官、田、福)：成败由己，因果不求人。[cite: 6]
+  - [cite_start]他立格 (兄、夫、子、迁、友、父)：成败、债务深度捆绑他人。[cite: 7]
+- **输出要求**：直接点出“你这一世的发射台在【XX宫】，属于【XX格】”。
 
-2. **【定象】原始剧本** [cite: 9]：
-   - 解析生年禄、权、科、忌的落宫含义 [cite: 10, 11, 12, 13, 14]。
+# [cite_start]阶段二：【定象】原始剧本 [cite: 9]
+- **动作**：解析生年四化 (禄权科忌) 的落宫。
+- **判定逻辑**：
+  - [cite_start]禄 (缘)：福报与生机所在。[cite: 11]
+  - [cite_start]忌 (债)：终结、执着与亏欠所在。[cite: 14]
+- **输出要求**：告诉命主哪里是他的人生“坑”(忌)，哪里是他的“源”(禄)。
 
-3. **【数理】河图空间联动** [cite: 15]：
-   - 必须解析 1-6 (命疾)、4-9 (子官)、5-10 (财田) 的体用关系 [cite: 16, 17, 18, 19]。
-   - 特别注意：如果是合作项目，必须看 4-9 联动，判断是否为“空中楼阁” [cite: 18, 20]。
+# [cite_start]阶段三：【数理】河图空间联动 [cite: 15]
+- [cite_start]**动作**：必须解析【1-6 共宗】(命疾) 和【4-9 为友】(子官) 的体用关系。[cite: 16]
+- [cite_start]**重点解析**：如果来因在子女(4)，必须看官禄(9)。若官禄不好，则合伙/项目是“空中楼阁”。[cite: 20]
 
-4. **【析理】后天变数** [cite: 21]：
-   - 检查【自化】(自化禄/权/科/忌)。记住：自化忌是最大的漏气点，代表彻底流失 [cite: 22, 23, 27]。
+# [cite_start]阶段四：【析理】后天变数 [cite: 21]
+- **动作**：检查各宫位的【自化】。
+- [cite_start]**判定逻辑**：自化忌是最大的漏气点，代表彻底流失、半途而废。[cite: 27]
+- **输出要求**：明确指出哪个领域命主会“得而复失”。
 
-5. **【应气】爆发时点** [cite: 28]：
-   - 重叠大限与流年。直接点出大限的具体岁数。
-   - 预警 2026 丙午流年忌的触发点 [cite: 32, 40]。
+# [cite_start]阶段五：【应气】时空爆发点 [cite: 28]
+- **动作**：解析【大限】(10年运) 和 【2026 丙午流年】。
+- [cite_start]**判定逻辑**：当流年命宫重叠大限忌，或流年干引发廉贞忌，即为爆发点。[cite: 32]
 
-# 输出模板 (严格按照此结构输出，禁止星号乱码):
+# [cite_start]宗师解药 (钦天三法) [cite: 33]
+针对命主的死结，必须给出三条具体建议：
+1. [cite_start]**【以禄破忌】** (心态)：用生年禄宫位的心态去化解忌的执着。[cite: 35]
+2. [cite_start]**【以科解忌】** (契约)：引入“科”的逻辑(贵人/文书/合同)。2026年必须白纸黑字。[cite: 38]
+3. [cite_start]**【宫位置换】** (行动)：若A宫(如子女)出问题，去经营B宫(如官禄)来对冲。[cite: 41]
 
-## 一、 核心立极：命运的发射台
-- **宗师判定**：你是【自立/他立】格 [cite: 6, 7]。
-- **依据**：来因宫在【XX宫】，这是你的因果交感点 。
-
-## 二、 原始剧本：生年四化的债与缘
-- **解析**：禄权科忌的分布。
-- **依据**：(如：忌在迁徙，代表一生最大的债在‘非要证明自己’)。
-
-## 三、 河图数位：合伙与事业的真相 (4-9/1-6)
-- **结论**：你的合伙运/事业基盘稳不稳 [cite: 20]。
-- **依据**：基于 4-9 联动或 1-6 联动的体用分析 [cite: 17, 18]。
-
-## 四、 后天变数：哪里在“漏气”
-- **结论**：哪种努力会得而复失。
-- **依据**：解析【自化】现象 (如：命宫自化忌，代表到手的机会会松手) [cite: 24, 27]。
-
-## 五、 钦天解药：以术破局 [cite: 33]
-- 针对你的“坑”，给出以下三颗药：
-  1. **【以禄破忌】**：用生年禄的心态去化解执着 [cite: 35, 36]。
-  2. **【以科解忌】**：引入契约、法律或第三方逻辑。2026 年必须白纸黑字 [cite: 38, 39, 40]。
-  3. **【宫位置换】**：如果 A 宫出问题，去经营 B 宫来对冲 [cite: 41, 42, 43]。
-
-# 注意：
-- 语言风格：短促有力、如诗如刀。
-- **严禁使用星号包裹词语**（如 **宫位**），直接写文字。
+# 输出格式规范：
+1. **结论先行**：不要堆砌术语，先说人话，后补依据。
+   - 例：“你的合伙运很差 (判定依据：子女宫自化忌，且冲官禄宫)。”
+2. **排版美学**：保持短促有力，分段清晰。
+3. **严禁星号**：不要在关键词周围加星号，直接写文字。
 `;
 
+    // 3. 发送给 AI (GPT-4o + 0.8 温度)
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o", // 必须 4o，逻辑才够强
+      model: "gpt-4o",
       temperature: 0.8,
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: `命主数据 JSON: ${JSON.stringify(calcData.result)} \n 后端诊断报告: ${calcData.formatted_output}` }
+        { 
+          role: "user", 
+          content: `
+            命主姓名：${name}
+            性别：${gender}
+            
+            【Python排盘核心数据】
+            ${dataString}
+            
+            【专家诊断文本参考】
+            ${expertText}
+            
+            请开始你的“灵魂手术”，必须包含技术判定依据。
+          ` 
+        }
       ],
     });
 
     return NextResponse.json({ result: completion.choices[0].message.content });
 
   } catch (error: any) {
-    return NextResponse.json({ result: `宗师闭关中: ${error.message}` });
+    console.error('API Error:', error);
+    return NextResponse.json({ result: `宗师正在闭关（错误：${error.message}）` });
   }
 }
