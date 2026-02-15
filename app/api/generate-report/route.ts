@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 
+// 初始化 OpenAI (确保环境变量中已配置 OPENAI_API_KEY)
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
   baseURL: "https://api.openai.com/v1",
@@ -11,37 +12,41 @@ export async function POST(req: Request) {
     const body = await req.json();
     const { name, gender, birthDate, birthTime } = body;
 
-    // 1. 准备数据
+    // 1. 准备排盘数据：将日期和时间拆解
     const dateObj = new Date(birthDate);
     const year = dateObj.getFullYear();
     const month = dateObj.getMonth() + 1;
     const day = dateObj.getDate();
     const hour = parseInt(birthTime.split(':')[0]);
 
-    // 2. 呼叫 Python (只拿数据)
-    // 你的 Python API 地址
+    // 2. 呼叫 Python 后端 (获取精准的钦天排盘数据)
+    // ⚠️ 请确保你的 Python API 地址正确
     const myApiUrl = "https://ziwei-calc.vercel.app/api/calc"; 
     
     const apiResponse = await fetch(myApiUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ year, month, day, hour, gender, minute: 0, name }),
+      body: JSON.stringify({ 
+        year, 
+        month, 
+        day, 
+        hour, 
+        gender: gender === 'male' ? '男' : '女', 
+        minute: 0, 
+        name 
+      }),
     });
 
     if (!apiResponse.ok) throw new Error("排盘服务连接失败");
     const responseJson = await apiResponse.json();
     
-    // 提取纯数据 (不带 Python 的文案，只带核心数据)
-    const cleanData = {
-      core: responseJson.result["核心"], 
-      palaces: responseJson.result["数据"]
-    };
-    const dataString = JSON.stringify(cleanData, null, 2);
+    // 提取纯数据：包括核心格局数据和完整的文本诊断报告
+    const dataString = JSON.stringify(responseJson.result, null, 2);
+    const fullFormattedOutput = responseJson.formatted_output; // Python 生成的专家诊断原文
 
     // ============================================================
-    // 🚀 核心修改：已注入你的“宗师”提示词
+    // 🧙‍♂️ 核心注入：钦天门紫微斗数宗师提示词 (100% 完整版)
     // ============================================================
-    
     const SYSTEM_PROMPT = `
 # Role: 钦天门紫微斗数宗师 (Deep Soul Surgeon)
 
@@ -130,22 +135,20 @@ export async function POST(req: Request) {
 **注意**：输出时严禁出现“根据计算...”这种机器人废话，直接进入“一、核心格局...”的叙述模式。
 `;
 
-    // ============================================================
-
-    // 3. 发送给 AI (附带精准数据)
+    // 4. 调用 GPT-4o 进行灵魂手术
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-4o", // 🚀 升级：必须是 4o，它才能撑起这种文学高度
+      temperature: 0.8, // 🚀 灵性：0.8 是最能激发人设魅力的参数
       messages: [
-        {
-          role: "system",
-          content: SYSTEM_PROMPT
-        },
+        { role: "system", content: SYSTEM_PROMPT },
         {
           role: "user",
-          content: `命主姓名：${name}，性别：${gender}。
+          content: `命主姓名：${name}，性别：${gender === 'male' ? '乾造' : '坤造'}。
           
-          【系统注入数据】
-          以下是后台Python计算出的精准排盘数据（JSON），请严格基于此数据，按照你的“宗师”人设进行解盘：
+          【系统注入排盘原始报告】
+          ${fullFormattedOutput}
+          
+          【原始JSON数据】
           ${dataString}
           
           请开始你的“灵魂手术”。`
