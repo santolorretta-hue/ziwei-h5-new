@@ -1,61 +1,89 @@
 import { NextResponse } from 'next/server';
 import OpenAI from 'openai';
 
-// 初始化 OpenAI (会自动读取你刚才设的 .env.local 里的 Key)
-const openai = new OpenAI();
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+  baseURL: "https://api.openai.com/v1",
+});
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { name, birthDate, birthTime, gender } = body;
+    const { name, gender, birthDate, birthTime } = body;
 
-    // 1. 【模拟排盘数据】
-    // 注意：这里暂时用假数据代替真实的排盘 API。
-    // 等你以后有了真正的紫微斗数排盘接口，在这里替换掉即可。
-    const mockZiweiChart = {
-      命宫: "紫微、七杀",
-      来因宫: "官禄宫", 
-      生年四化: ["破军化禄", "巨门化权", "太阴化科", "贪狼化忌"],
-      流年: "2026丙午年",
-      流年命宫: "午宫 (无主星)",
-      流年四化: ["天同化禄", "天机化权", "文昌化科", "廉贞化忌"]
-    };
+    // 1. 拆解日期 (为了配合你的 Python 参数)
+    const dateObj = new Date(birthDate);
+    const year = dateObj.getFullYear();
+    const month = dateObj.getMonth() + 1;
+    const day = dateObj.getDate();
+    const hour = parseInt(birthTime.split(':')[0]);
 
-    // 2. 召唤 AI 进行解盘
+    console.log("正在呼叫 Python 大脑...");
+
+    // ============================================================
+    // 🎯 修正点 1：精准指向 /api/calc
+    // ============================================================
+    const myApiUrl = "https://ziwei-calc.vercel.app/api/calc"; 
+
+    const apiResponse = await fetch(myApiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      
+      // ============================================================
+      // 🎯 修正点 2：参数名严格对应你的 Python Class (PaipanRequest)
+      // ============================================================
+      body: JSON.stringify({ 
+        year: year, 
+        month: month, 
+        day: day, 
+        hour: hour, 
+        gender: gender, // Python 里定义的是 gender
+        minute: 0       // 补齐 minute 参数
+      }),
+    });
+
+    if (!apiResponse.ok) {
+      // 打印出 Python 返回的错误详情，方便调试
+      const errorText = await apiResponse.text();
+      console.error("Python API 报错:", errorText);
+      throw new Error(`排盘服务连接失败 (${apiResponse.status}): ${errorText}`);
+    }
+
+    // 2. 拿到精准排盘数据
+    const responseJson = await apiResponse.json();
+    
+    // 注意：你的 Python 返回结构是 { meta: ..., result: ..., formatted_output: ... }
+    // 我们主要把 formatted_output (全文本报告) 和 result (数据) 喂给 AI
+    const chartData = responseJson.result; 
+    const fullText = responseJson.formatted_output;
+
+    console.log("拿到数据，准备解盘...");
+
+    // 3. 喂给 AI 解读
     const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini", // 或者用 gpt-3.5-turbo，为了省钱建议先用 mini
+      model: "gpt-4o-mini",
       messages: [
         {
           role: "system",
-          content: `你是一位精通【钦天门（华山派）】紫微斗数的宗师，师承蔡明宏大师。
-          请根据用户的排盘数据，用“缘起缘灭”的视角，生成一份2026年流年运势报告。
+          content: `你是一位紫微斗数大师。
+          我将为你提供一份【精准的程序排盘结果】。
           
-          要求：
-          1. 必须提及“来因宫”对命运的影响。
-          2. 重点分析“流年四化”对财运和事业的引动。
-          3. 语气要高深但充满关怀，像一位得道高人。
-          4. 输出格式支持 Markdown（可以加粗、分段）。`
+          请注意：
+          1. 用户的排盘信息（宫位、星曜、四化）已经完全计算好了，**绝对不要**自己重新排盘，必须以我提供的内容为准。
+          2. 重点解读【来因宫】的含义，以及流年（2026年）的运势。
+          3. 语气要温暖、给人力量。`
         },
         {
           role: "user",
-          content: `缘主姓名：${name}
-          性别：${gender === 'male' ? '男' : '女'}
-          生辰：${birthDate} ${birthTime}
-          
-          排盘核心数据：${JSON.stringify(mockZiweiChart)}
-          
-          请为我批算2026年的事业与财运。`
+          content: `这是计算出的详细命盘信息：\n\n${fullText}\n\n请为命主【${name}】（${gender}）进行2026流年运势的深度解读。`
         }
       ],
     });
 
-    const aiReport = completion.choices[0].message.content;
+    return NextResponse.json({ result: completion.choices[0].message.content });
 
-    // 3. 把结果返回给前端
-    return NextResponse.json({ result: aiReport });
-
-  } catch (error) {
+  } catch (error: any) {
     console.error('API Error:', error);
-    return NextResponse.json({ error: '算命的人太多，天机暂时泄露不出来（报错了）' }, { status: 500 });
+    return NextResponse.json({ result: `大师正在闭关（错误：${error.message}）` });
   }
 }
